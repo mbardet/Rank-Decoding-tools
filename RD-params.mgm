@@ -1,0 +1,60 @@
+load "evaluator-RD.mgm";
+omega := 2;
+vb := 0;
+
+if true then
+    // reproduce parameters from Table 2 in https://eprint.iacr.org/2022/1031
+    printf "parameters Table 2";
+q := 2;
+for kmrdROLLO in [[83,73,7,8], [97,89,8,8],[113,103,9,9],[83,67,7,8],[97,79,8,8],[113,97,9,9]] do
+    m:=kmrdROLLO[2];kp:=kmrdROLLO[1];d:=kmrdROLLO[4];rp:=kmrdROLLO[3];
+    n:=2*kp-Floor(kp/d);k := kp-Floor(kp/d);r:=d;
+    a0,comp0,p0 := FindBestParamMM(k,m,n,r,q: verb:=0, omega:=omega);
+    b,a,comp,p :=  FindBestComplexitySMfqm(k,m,n,r,q:verb:=vb,bmax := n, omega:=omega);
+    combi := LogCombiComplexity(m,n,k,r,q: omega:=omega);
+    
+    n:=2*kp;k := kp;r:=rp;
+    a10,comp10,p10 := FindBestParamMM(k,m,n,r,q: verb:=0, omega:=omega);
+    b1,a1,comp1,p1 :=  FindBestComplexitySMfqm(k,m,n,r,q:verb:=vb,bmax := n, omega:=omega);
+    combi1 := LogCombiComplexity(m,n,k,r,q: omega:=omega);
+    printf "\n & %o & %o & %o & %o & %o &",q,kp,m,rp,d;
+if comp0 lt comp1 then
+    printf " %o * & %o & %o",Ceiling(comp0),a0,p0;
+    printf "&%o * & %o & %o",Ceiling(comp),b,a;
+    printf "&%o *",Ceiling(combi);
+else
+    printf " %o & %o & %o",Ceiling(comp10),a10,p10;
+    printf "&%o & %o & %o",Ceiling(comp1),b1,a1;
+    printf "&%o",Ceiling(combi1);
+end if;
+end for;
+end if;
+
+if true then
+printf "\nparameters Fig 1";
+m:=31; n:=33; k:=15; r:=10; q:=2;
+rmax := rankGV(q,m,n,k);
+printf "\nRank GV = %o",rmax;
+for r in [2..rmax] do
+    combi := LogCombiComplexity(m,n,k,r,q: omega:=omega);
+    printf "\n            %o       %o    combi",r,Ceiling(combi);
+end for;
+for r in [2..rmax] do
+    a0,comp0,p0 := FindBestParamMM(k,m,n,r,q: verb:=0, omega:=omega);
+    printf "\n            %o       %o    MM ",r,Ceiling(comp0);
+    printf "\n            %o %o MMa0",r,a0;
+end for;
+for r in [2..rmax] do
+    b,a,comp,p :=  FindBestComplexitySMfqm(k,m,n,r,q:verb:=0, omega:=omega);
+    if comp ne Infinity() then
+	printf "\n            %o       %o    alg",r,Ceiling(comp);
+    end if;
+    if b ne Infinity() then
+	printf "\n            %o %o SMb",r,b;
+    end if;
+    if a ne Infinity() then
+	printf "\n            %o %o SMa",r,a;
+    end if;
+end for;
+end if;
+

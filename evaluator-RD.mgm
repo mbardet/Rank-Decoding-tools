@@ -1,0 +1,344 @@
+/*
+   Magali Bardet <magali.bardet@univ-rouen.fr> 2023
+
+   Functions to evaluate the complexity of algorithms to solve the Rank Decoding problem:
+   - combinatorial approach [GRS13] [AGHT18]
+   - MaxMinors modeling [BBBGNRT20,BBCGPSTV20]
+   - SMfqm+MMfq modeling [BBBGT23]
+
+   The optional parameter omega refers to the exponent for the linear
+   algebra complexity O(rows*cols^(omega-1)).
+
+   Hypotheses:
+   - default omega=2 (~ same as wiedemann algorithm) constante 7 for the Strassen algorithm
+   - binary cost of multiplication of two elements in GF(q): cf LogFieldMult(q)
+   - Nrows = Rank (i.e. we are able to select linearly independent rows)
+   - zero or a unique solution to the affine problem: r < rkGV
+   
+*/
+
+
+
+forward LogFieldMult;
+/* LogFieldMult(q) returns the bit cost of a field multiplication in GF(q)
+   binary cost of a field multiplication in GF(q)
+   Faster Binary-Field Multiplication and Faster Binary-Field MACs
+   Daniel J. Bernstein and Tung Chou, SAC 2014.
+   2^128: 9062 gates
+   2^256: 22164 gates
+   2^2: 7 gates
+   2^8: 110 gates
+   else: 2*Log(2,q)^2 gates
+*/
+forward LogStrassenComplexity;
+/* LogStrassenComplexity(rows,cols,q: omega:=2) returns the binary
+   logarithm of the complexity of computing the Echelon form on a
+   matrix of size rows x cols. Constant 7 for the O(), default omega=2
+   due to the potential structure of the matrix.  Take into account
+   the bit cost of the multiplication in Fq via LogFieldMult.
+*/
+
+/* ******************************************** */
+/*                       COMMON TOOLS           */
+/* ******************************************** */
+
+// volume of sphere of radius t in GF(q^m)
+function St(t,q,m,n)
+    assert t le Min(m,n) and t ge 0;
+    if t eq 0 then return 1;
+    else
+	return &*[(q^n-q^j)*(q^m-q^j)/(q^t-q^j) : j in [0..t-1]];
+    end if;
+end function;
+
+// volume of ball of radius t in GF(q^m)
+function Bt(t,q,m,n)
+    assert t le Min(m,n) and t ge 0;
+    return &+[St(i,q,m,n) : i in [0..t]];
+end function;
+
+// return the rankGV bound for a code of length n and dimension k over GF(q^m)
+// i.e. the largest d such that q^(km)*B_(d-1) < q^(mn).
+// cf Loidreau 14, Gadouleau Yan 06.
+function rankGV(q,m,n,k)
+    d := 0;
+    while m*(n-k) ge  Log(q,Bt(d,q,m,n)) do
+	d := d+1;
+    end while;
+    return d-1;
+end function;
+
+// return the asymptotical value of rankGV for a code of length n and dimension k over GF(q^m)
+// i.e. the largest d such that q^(km)*B_(d-1) <= q^(mn).
+function rankGVasympt(m,n,k)
+    return (m+n)/2 - SquareRoot((m-n)^2/4+k*m);
+end function;
+
+function LogFieldMult(q)
+    if q eq 2^128 then return Log(2,9062);
+    elif q eq 2^256 then return Log(2,22164);
+    elif q eq 2^8 then return Log(2,110);
+    elif q eq 2^2 then return Log(2,7);
+    elif q eq 2 then return Log(2,1);
+    else     return Log(2,2*Log(2,q)^2);
+    end if;
+end function;
+
+function LogStrassenComplexity(Rank,Ncols,q:omega:=2)
+    // conservative parameters: constant 7 in Linear algebra, omega=2 by default
+    // in bits complexity.
+    return Log(2,7*Rank*Ncols^(omega-1))+LogFieldMult(q);
+end function;
+
+function LogCombiComplexity(m,n,k,r,q: omega := 2)
+    poly := (m*(n-k))^omega;
+    // GRS13 poly*q^expo1
+    expo1 := r*Ceiling(k*m/n);
+    // AGHT18 poly*q^expo2
+    expo2 := r*Ceiling(RealField()!((k+1)*m/n))-m;
+    expo := Min(expo1,expo2);
+    return Log(2,poly) + expo*Log(2,q) + LogFieldMult(q);
+end function;
+
+/* 
+   Number of linear equations in MMfq
+*/
+function NbMM(k,m,n,r)
+    return m*Binomial(n-k-1,r);
+end function;
+
+/* 
+   Number of variables in MMfq
+*/
+function MbMM(k,m,n,r)
+    return Binomial(n,r);
+end function;
+
+/* 
+    Number of columns in SMfqm+MMfq  at degree b
+    0 if the system solves at b=0 (MaxMinors) but b>=1.
+*/
+function Mbfq(k,m,n,r,b)
+    assert (1 le k) and (k le n) and (b ge 0) and (r ge 1) and (m ge 1);
+    if b eq 0 then
+	return MbMM(k,m,n,r);
+    else
+	return Max(0,Binomial(k+b-1,b)*(Binomial(n,r)-m*Binomial(n-k-1,r)));
+    end if;
+end function;
+
+/*
+    Number of rows in SMfqm at bi-degree b,1
+*/
+function Nbfqm(k,m,n,r,b)
+    assert (1 le k) and (k le n) and (b ge 1) and (r ge 1) and (m ge 1);
+    tmp := &+[Binomial(n-i,r)*Binomial(k+b-1-i,b-1) : i in [1..k]] - Binomial(n-k-1,r)*Binomial(k+b-1,b);
+    assert tmp ge 0;
+    return tmp;
+end function;
+
+/*
+    Number of syzygies in SMfqm at bi-degree b,1
+*/
+function Nbfqsyz(k,m,n,r,b)
+    assert (1 le k) and (k le n) and (b ge 1) and (r ge 1) and (m ge 1);
+    tmp := (m-1)*&+[(-1)^(i+1)*Binomial(k+b-i-1,b-i)*Binomial(n-k-1,r+i) : i in [1..b]];
+    assert tmp ge 0;
+    return tmp;
+end function;
+
+/*
+   Number of rows in SMfqm+MMfq at bi-degree b,1
+*/
+function NbRowsSMfqm(k,m,n,r,b)
+    if b eq 0 then
+	return NbMM(k,m,n,r);
+    else
+	tmp := Nbfqm(k,m,n,r,b)-Nbfqsyz(k,m,n,r,b);
+	assert tmp ge 0;
+	return tmp;
+    end if;
+end function;
+
+
+/* Input: k,m,n,r,q,b such that the system solves at b
+   find the best p to solve at b by puncturing the code.
+   returns comp,p.
+*/
+function FindpSMfqm(k,m,n,r,q,b:verb:=0,omega:=2)
+    Nb := NbRowsSMfqm(k,m,n,r,b);
+    Mb := Mbfq(k,m,n,r,b);
+    assert Nb ge Mb-1;
+    p := 0;
+    while Nb ge Mb-1 do
+	p := p+1;
+	Nb := NbRowsSMfqm(k,m,n-p,r,b);
+	Mb := Mbfq(k,m,n-p,r,b);
+    end while;
+    if verb ge 3 then
+	printf "\n\t b=%o, (p=%o, ratio %.2o) =>",b,p,Nb/Mb*1.;
+    end if;
+    p := p-1;
+    Nb := NbRowsSMfqm(k,m,n-p,r,b);
+    Mb := Mbfq(k,m,n-p,r,b);
+    if verb ge 3 then
+	printf " p=%o, ratio %.2o\n",p,Nb/Mb*1.;
+    end if;
+    comp := LogStrassenComplexity(Nb,Mb,q: omega:=omega);
+    return comp,p;
+end function;
+
+
+
+/*
+   Find the smallest a to solve at b=0, then find p = n-n'
+   Returns a,log2complexity,p
+*/
+function FindBestParamMM(k,m,n,r,q: verb := 0, omega:=2)
+    if verb ge 1 then
+	  printf "\nMax Minor for m=%o, n=%o, k=%o, r=%o",m,n,k,r;
+    end if;
+    a := 0;
+    Nb := NbMM(k-a,m,n-a,r);
+    Mb := MbMM(k-a,m,n-a,r);
+    // increase a until we can solve MM
+    while (Nb lt Mb-1) and (a le k) do
+	a := a+1;
+	Nb := NbMM(k-a,m,n-a,r);
+	Mb := MbMM(k-a,m,n-a,r);
+    end while;
+    // if a eq k we get a combinatorial attack.
+    if a eq k then
+	return a,Infinity(),0;
+    end if;
+    // try to puncture the code and still solve
+    comp,p := FindpSMfqm(k-a,m,n-a,r,q,0: verb:=verb,omega:=omega);
+    // the cost of the reduction is negligible
+    comp := comp + r*a*Log(2,q);
+    if verb ge 1 then
+	printf "\nMM a=%o, p=%o: 2^(%.1o), ratio %.2o",a,p,comp,Nb/Mb*1.;
+    end if;
+    return a,comp,p;
+end function;
+
+/*
+    find the smallest a<=amax to solve at b>=1 with SMfqm+MMfq
+    returns a,log2complexity,p
+*/
+function FindBestParamSMfqm(k,m,n,r,q,b: verb := 0, amax:=k, omega:=2)
+    a := 0;
+    Nb := NbRowsSMfqm(k-a,m,n-a,r,b);
+    Mb := Mbfq(k-a,m,n-a,r,b);
+    if verb  ge 2 then
+	  printf "\nSMfqm + MMfq for m=%o, n=%o, k=%o, r=%o at b=%o",m,n,k,r,b;
+    end if;
+    while (Nb lt Mb-1) and (a le amax-1) do
+	a := a+1;
+	Nb := NbRowsSMfqm(k-a,m,n-a,r,b);
+	Mb := Mbfq(k-a,m,n-a,r,b);
+	//  if a eq k we have an exhaustive search.
+	if (a eq k) then
+	    if verb ge 2 then
+		printf "\n\ta=%o",a;
+	    end if;
+	    return a,Infinity(),0;
+	end if;
+	// Mb = 0 => MaxMinors solves the problem.
+	if Mb eq 0 then
+	    comp,p := FindpSMfqm(k-a,m,n-a,r,q,0:verb:=verb,omega:=omega);
+	    comp := comp+r*a*Log(2,q);
+	    if verb ge 1 then
+		printf "\n\tb=%o, a=%o, MM solves (b=0), comp %.2o",b,a,comp;
+	    end if;
+	    return a,Infinity(), 0;
+	end if;
+    end while;
+    // computation over fqm:
+    if Nb ge Mb-1 then
+	comp,p := FindpSMfqm(k-a,m,n-a,r,q^m,b:verb:=verb,omega:=omega);
+	comp := comp + r*a*Log(2,q);
+	if verb ge 2 then
+	    printf "\n\t b=%o, a=%o:  p=%o, comp %.2o",b,a,p,comp;
+	end if;
+	if a eq k then return a,Infinity(),0;end if;
+	return a,comp,p;
+    else
+	// we have a = amax
+	if verb ge 1 then
+	    printf "\n\t b=%o pas de solution a>%o ",b,amax;
+	end if;
+	return amax,Infinity(),0;
+    end if;
+end function;
+
+
+/*
+    find b with SMfqm+MMfq. No theoretical limit on b.
+*/
+function FindbSMfqm(k,m,n,r,q: verb:=0, bmax := 100)
+    b := 1;
+    Nb := NbRowsSMfqm(k,m,n,r,b);
+    Mb := Mbfq(k,m,n,r,b);
+    while (Nb lt Mb-1) and (b le bmax) do
+	b := b+1;
+	Nb := NbRowsSMfqm(k,m,n,r,b);
+	Mb := Mbfq(k,m,n,r,b);
+    end while;
+    if Nb ge Mb-1 then
+	return b;
+    else
+	return Infinity();
+    end if;
+end function;
+
+/* 
+   rank metric code with parameters (np,kp) over f_q^mp
+   Returns b,a,comp,p
+*/
+function FindBestComplexitySMfqm(k,m,n,r,q: verb:=0, bmax:=100, omega:=2)
+    // b=0 case
+    a0,comp0,p0 := FindBestParamMM(k,m,n,r,q:verb := verb, omega:=omega);
+    if a0 eq 0 then
+	// infinity if MM solves by itself
+	return 0,a0,Infinity(),p0;
+    end if;
+    // if a0 ne 0, we can compare with SM+
+    // we decrease a0 and try to solve
+    // tabb[a+1] = value of b for a
+    P := Parent([1,Infinity()]);
+    taba:=P![];
+    tabb:=P![];
+    tabp:=P![];
+    tabc:=P![];
+    for a in [a0-1..0 by -1] do
+	b := FindbSMfqm(k-a,m,n-a,r,q^m:verb:=verb, bmax:=bmax);
+	tabb:=tabb cat [b];
+	if b eq Infinity() then
+	    if verb ge 2 then
+		printf "\n* a=%o, b=Infinity",a;
+	    end if;
+	    taba:=taba cat [Infinity()];
+	    tabp:=tabp cat [0];
+	    tabc:=tabc cat [Infinity()];
+	    break;
+	end if;
+	comp,p:=FindpSMfqm(k-a,m,n-a,r,q^m,b:verb:=verb,omega:=omega);
+	comp := comp + a*r*Log(2,q);
+	taba:=taba cat [a];
+	tabp := tabp cat [p];
+	tabc := tabc cat [comp];
+	if verb ge 2 then
+	    printf "\n* a=%o, b=%o, p=%o, comp=%.1o",a,b,p,comp;
+	end if;
+    end for;
+    assert #tabb eq #taba and #taba eq #tabp and #tabp eq #tabc and #tabc eq #tabb;
+    cmin,i:=Min(tabc);
+    pmin:=tabp[i];
+    amin:=taba[i];
+    bmin:=tabb[i];
+    if verb ge 1 then
+	printf "\n\n*** \t Best value SMfqm+MMfq: b=%o, a=%o, p=%o, 2^(%.1o)\n",bmin,amin, pmin,cmin;
+    end if;
+    return bmin,amin,cmin,pmin;
+end function;
+
