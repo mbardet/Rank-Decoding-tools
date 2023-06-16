@@ -102,8 +102,10 @@ end function;
 
 /* 
    Number of linear equations in MMfq
+   Needs n-k-1>0 and r<=n-k-1
 */
 function NbMM(k,m,n,r)
+    assert (n-k-1 gt 0) and (r le n-k-1);
     return m*Binomial(n-k-1,r);
 end function;
 
@@ -111,6 +113,7 @@ end function;
    Number of variables in MMfq
 */
 function MbMM(k,m,n,r)
+    assert r le n;
     return Binomial(n,r);
 end function;
 
@@ -119,7 +122,7 @@ end function;
     0 if the system solves at b=0 (MaxMinors) but b>=1.
 */
 function Mbfq(k,m,n,r,b)
-    assert (1 le k) and (k le n) and (b ge 0) and (r ge 1) and (m ge 1);
+    assert (1 le k) and (k lt n) and (b ge 0) and (r ge 1) and (m ge 1) and (r le n-k-1);
     if b eq 0 then
 	return MbMM(k,m,n,r);
     else
@@ -131,7 +134,7 @@ end function;
     Number of rows in SMfqm at bi-degree b,1
 */
 function Nbfqm(k,m,n,r,b)
-    assert (1 le k) and (k le n) and (b ge 1) and (r ge 1) and (m ge 1);
+    assert (1 le k) and (k lt n) and (b ge 1) and (r ge 1) and (m ge 1) and (r le n-k-1);
     tmp := &+[Binomial(n-i,r)*Binomial(k+b-1-i,b-1) : i in [1..k]] - Binomial(n-k-1,r)*Binomial(k+b-1,b);
     assert tmp ge 0;
     return tmp;
@@ -141,7 +144,7 @@ end function;
     Number of syzygies in SMfqm at bi-degree b,1
 */
 function Nbfqsyz(k,m,n,r,b)
-    assert (1 le k) and (k le n) and (b ge 1) and (r ge 1) and (m ge 1);
+    assert (1 le k) and (k lt n) and (b ge 1) and (r ge 1) and (m ge 1) and (r le n-k-1);
     tmp := (m-1)*&+[(-1)^(i+1)*Binomial(k+b-i-1,b-i)*Binomial(n-k-1,r+i) : i in [1..b]];
     assert tmp ge 0;
     return tmp;
@@ -170,17 +173,29 @@ function FindpSMfqm(k,m,n,r,q,b:verb:=0,omega:=2)
     Mb := Mbfq(k,m,n,r,b);
     assert Nb ge Mb-1;
     p := 0;
-    while Nb ge Mb-1 do
+    // we can puncture the code, as long as there is a unique solution
+    // i.e. m*(n-k)-n*r-(m-r)*r<0;
+    // (m-r)(n-r)<km
+    // n-p >0
+    while (Nb ge Mb-1) and (k*m gt (m-r)*(n-r)) and (n-p gt 1) do
 	p := p+1;
 	Nb := NbRowsSMfqm(k,m,n-p,r,b);
 	Mb := Mbfq(k,m,n-p,r,b);
+    printf "Nb=%o, Mb=%o,p=%o",Nb,Mb,p;
     end while;
     if verb ge 3 then
-	printf "\n\t b=%o, (p=%o, ratio %.2o) =>",b,p,Nb/Mb*1.;
+	if Mb ne 0 then
+	    printf "\n\t b=%o, (p=%o, ratio %.2o) =>",b,p,Nb/Mb*1.;
+	else
+	    printf "\n\t b=%o, (p=%o, Nb=%o,Mb=%o) =>",b,p,Nb,Mb;
+	end if;	
     end if;
-    p := p-1;
+    if (Nb lt Mb-1) then
+	p := p-1;
+    end if;
     Nb := NbRowsSMfqm(k,m,n-p,r,b);
     Mb := Mbfq(k,m,n-p,r,b);
+    assert Nb ge Mb-1;
     if verb ge 3 then
 	printf " p=%o, ratio %.2o\n",p,Nb/Mb*1.;
     end if;
@@ -193,8 +208,21 @@ end function;
 /*
    Find the smallest a to solve at b=0, then find p = n-n'
    Returns a,log2complexity,p
+   log2complexity is Infinity() if it needs a=k to solve
+   (then the attack is a pure combinatorial attack).
+   Input parameters:
+   - k dimension of the code,
+   - m degree of the extension field,
+   - n length of the code,
+   - r weight of the error,
+   - q size of the finite field.
+   We must have 1<=k<n, q power of a prime, m>=1, 0<=r<=Min(m,n)
+   r<=n-k-1 (to have equations in MaxMinors)
 */
 function FindBestParamMM(k,m,n,r,q: verb := 0, omega:=2)
+    // only for system with a unique solution.
+    assert r le rankGV(q,m,n,k);
+    assert (k ge 1) and (k lt n) and (r le Min([m,n,n-k-1]));
     if verb ge 1 then
 	  printf "\nMax Minor for m=%o, n=%o, k=%o, r=%o",m,n,k,r;
     end if;
@@ -224,8 +252,12 @@ end function;
 /*
     find the smallest a<=amax to solve at b>=1 with SMfqm+MMfq
     returns a,log2complexity,p
+    log2complexity is Infinity() if it needs a=k to solve
+    (then the attack is a pure combinatorial attack) or if it solves at b=0
+    (then look at the MaxMinors attack).
 */
 function FindBestParamSMfqm(k,m,n,r,q,b: verb := 0, amax:=k, omega:=2)
+    assert (k ge 1) and (k lt n) and (r le Min([m,n,n-k-1]));
     a := 0;
     Nb := NbRowsSMfqm(k-a,m,n-a,r,b);
     Mb := Mbfq(k-a,m,n-a,r,b);
@@ -274,6 +306,7 @@ end function;
 
 /*
     find b with SMfqm+MMfq. No theoretical limit on b.
+    returns Infinity() if no suitable b has been found in the range [1..bmax].
 */
 function FindbSMfqm(k,m,n,r,q: verb:=0, bmax := 100)
     b := 1;
@@ -294,8 +327,12 @@ end function;
 /* 
    rank metric code with parameters (np,kp) over f_q^mp
    Returns b,a,comp,p
+   comp is Infinity() if it solves at b=0 (then see MaxMinors)
+   or if there is no b in [1..bmax] where it solves.
 */
 function FindBestComplexitySMfqm(k,m,n,r,q: verb:=0, bmax:=100, omega:=2)
+    // only for system with a unique solution.
+    assert r le rankGV(q,m,n,k);
     // b=0 case
     a0,comp0,p0 := FindBestParamMM(k,m,n,r,q:verb := verb, omega:=omega);
     if a0 eq 0 then
