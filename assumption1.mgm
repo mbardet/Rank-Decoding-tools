@@ -1,0 +1,37 @@
+/* check assumption 1 in BBBGT23
+https://eprint.iacr.org/2022/1031
+*/
+load "tools.mgm";
+for q in [2,3,5] do
+fq  := GF(q);
+for m in [5..10] do
+fqm<w> := ext<fq | m>;
+
+// works for all values, except sometimes for r=rankGV where there are several solutions
+for n in [1..13] do
+    for k in [1..n-2] do
+	for r in [1..rankGV(q,m,n,k)-1] do
+	    // repeat 100 times
+	    for i in [1..100] do
+	    // generate a RD instance with a solution
+	    G,y,e := RandomRankSyndromeInstance(n,k,r,fqm,fq: verb := 0 );
+	    M := MaxMinorsMatrix(G,y,r,fqm,fq);
+	    if Rank(M) ne Min(m*Binomial(n-k-1,r),Binomial(n,r)-1) then
+		// assumption is not satisfied
+		printf "\n######\n(q,m,n,k,r,rGV)=(%o,%o,%o,%o,%o,%o)",q,m,n,k,r,rankGV(q,m,n,k);
+		printf " M %o x %o rank %o (%o)",Nrows(M),Ncols(M),Rank(M),Nrows(M) eq m*Binomial(n-k-1,r) and Ncols(M) eq Binomial(n,r);
+		printf " ***WARNING RANK , r=%o, rGV=%o ***\n",r,rankGV(q,m,n,k);
+	    end if;
+	    // check that the solution is the good one if we can solve
+	    if Rank(M) eq Ncols(M)-1 then
+		E := MaxMinorsSolve(M,G,y,r);
+	        Hy := ParityCheckMatrix(LinearCode(G)+LinearCode(y));
+	        assert (RankWeight(E,fqm,fq) le r)  and (E ne 0) and E*Transpose(Hy) eq 0;
+	    end if;
+	end for;
+	end for;
+    end for;
+end for;
+end for;
+
+end for;

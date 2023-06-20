@@ -1,0 +1,273 @@
+forward RankWeight; // rank_weight(v,fqm,fq) returns Return the rank of the vector v in fqm over GF(q)
+forward Mat; // Mat(v,fqm,fq) returns the matrix in fq^(mxn) associated to v in fqm^n by writting each component of v in a basis of fqm over fq
+forward RandomVectorofWeight;// RandomVectorofWeight(n,w,fqm,fq);
+forward PosToSet;
+forward SetToPos;
+/* ******************************************** */
+/*    GLOBAL TOOLS FOR RANK CODING THEORY IN MAGMA  */
+/* ******************************************** */
+function Mat(v,fqm,fq)
+    Vfqm, phiVfqm := VectorSpace(fqm, fq);
+    if Type(v) eq ModTupFldElt then
+	n := Ncols(v);
+    else
+	n := #v;
+    end if;
+    m := Degree(fqm,fq);
+    return Transpose(Matrix(fq,n,m,[phiVfqm(v[i]) : i in [1..n]]));
+end function;
+
+// take a vector of the list of the evaluation of all maximal minors of a matrix
+// returns a possible matrix having those minors
+function MatrixFromMinors(n,r,c)
+    // take the last non-zero minor
+    if Type(c) ne ModTupFldElt then
+	c := Vector(c);
+    end if;
+    i0 := Ncols(c);
+    while c[i0] eq 0 do
+	i0 := i0-1;
+    end while;
+    // c[i0]!=0, normalize
+    c := c/c[i0];
+    // Construct C with identity on i
+    I := PosToSet(n,r,i0:sorted:=true);
+    fq := CoefficientRing(c);
+    C := ZeroMatrix(fq,r,n);
+    for j in [1..r] do
+	C[j,I[j]] := 1;
+    end for;
+    for i->posi in I do
+	for j in [i : i in [1..n]| i notin I] do
+	    J := Sort([j : j in I| j ne posi] cat [j]);// J = I \ {posi} U {j}
+	    // to deal with the position j with respect to I
+	    posj := Index(Sort(J cat [j]),j);
+	    posJ := SetToPos(n,J);
+	    C[i,j] := (-1)^(r-posj)*(-1)^(r-i)*c[posJ];
+	end for;
+    end for;
+    return C;
+end function;
+
+
+function RankWeight(v,fqm,fq)
+    return Rank(Mat(v,fqm,fq));
+end function;
+
+// returns a basis E of the coordinates of e over fq
+// and a matrix C of size r x n over fq such that e = E*C
+function RankSupport(e,fqm,fq)
+    Mate := Mat(e,fqm,fq);
+    n := Ncols(Mate);
+    B := Matrix(fqm,1,Degree(fqm,fq),Basis(fqm,fq));
+    assert B*ChangeRing(Mate,fqm) eq e;
+    MatE := Transpose(EchelonForm(Transpose(Mate)));
+    r := Rank(Mate);
+    E := B*ChangeRing(MatE,fqm);
+    assert (Nrows(E) eq 1) and {E[1,i] : i in [r+1..n]} eq {0};
+    E := Vector(fqm,[E[1,i] : i in [1..r]]);
+    // we remove the last zero columns
+    MatE := ColumnSubmatrix(MatE,[1..r]);
+    K := [];
+    for i in [1..n] do
+	// compute the ith column of C such that e = E*C by linear algebra
+	K[i] := (NullspaceOfTranspose(HorizontalJoin(-ColumnSubmatrix(Mate,[i]),MatE)));
+    end for;
+    C := Transpose(Matrix(fq,n,r,&cat[[Basis(K[i])[1][j] : j in [2..r+1]] : i in [1..n]]));
+
+    assert e eq E*ChangeRing(C,fqm);
+    return E,C;
+end function;
+
+// input: length n of the vector, a weight r,
+// finite fields fqm extension of fq
+// return a random vector
+// of n coordinates in fqm of rank weight r over fq
+function RandomVectorofWeight(n,r,fqm,fq)
+    m := Degree(fqm,fq);
+    assert (n ge 1) and (r le Min(m,n)) and (r ge 0);
+    // generate a basis of the support
+    repeat
+        e := Random(fqm);
+    until e ne 0;
+    E := [ e ];
+    for i := 2 to r do
+        repeat
+            _E_ := Append(E,Random(fqm));
+	until RankWeight(_E_,fqm,fq) eq i;
+        E := _E_;
+    end for;
+    assert RankWeight(E,fqm,fq) eq r;
+    // generate the coordinates of the vector T as r * C
+    // with C in fq of size r x n full rank
+    repeat
+	C := ChangeRing(Random(KMatrixSpace(fq,r,n)),fqm);
+    until Rank(C) eq r;
+    return Vector(E)*C;
+end function;
+
+
+// volume of sphere of radius t in GF(q^m)
+function St(t,q,m,n)
+    assert t le Min(m,n) and t ge 0;
+    if t eq 0 then return 1;
+    else
+	return &*[(q^n-q^j)*(q^m-q^j)/(q^t-q^j) : j in [0..t-1]];
+    end if;
+end function;
+
+// volume of ball of radius t in GF(q^m)
+function Bt(t,q,m,n)
+    assert t le Min(m,n) and t ge 0;
+    return &+[St(i,q,m,n) : i in [0..t]];
+end function;
+
+// return the rankGV bound for a code of length n and dimension k over GF(q^m)
+// i.e. the largest d such that q^(km)*B_(d-1) < q^(mn).
+// cf Loidreau 14, Gadouleau Yan 06.
+function rankGV(q,m,n,k)
+    d := 0;
+    while m*(n-k) ge  Log(q,Bt(d,q,m,n)) do
+	d := d+1;
+    end while;
+    return d-1;
+end function;
+
+// return the asymptotical value of rankGV for a code of length n and dimension k over GF(q^m)
+// i.e. the largest d such that q^(km)*B_(d-1) <= q^(mn).
+function rankGVasympt(m,n,k)
+    return (m+n)/2 - SquareRoot((m-n)^2/4+k*m);
+end function;
+
+// return the position of the subset J of size r
+// in the subsets of size r of [1..n]
+// [1..r] is the last one
+// [n-r+1..n] is the first one
+// they are orded with the grevlex order
+function SetToPos(n,J)
+    if Type(J) eq SetEnum then J := Setseq(J);end if;
+    J := Sort(J);
+    if IsEmpty(J) then return 1;
+    else
+	return &+[Binomial(n-J[l],#J-(l-1)) : l in [1..#J]]+1;
+    end if;
+end function;
+
+// return the set J of size r
+// such that SettoPos(n,J)=i
+function PosToSet(n,r,i: sorted := false)
+    assert2 (0 le r) and (r le n) and (1 le i) and (i le Binomial(n,r)); 
+    if (r eq 0) then
+	res := {};
+    elif (r eq 1) then
+	res:= {n-i+1};
+    else    
+	i1 := 1;
+	while i le Binomial(n-i1,r) do
+	    i1 := i1+1;
+	end while;
+	res := {i1} join PosToSet(n,r-1,i-Binomial(n-i1,r));
+    end if;
+    if sorted then
+	res := Sort(Setseq(res));
+    end if;
+    return res;
+end function;
+
+
+/************************************************************
+*             TOOLS FOR MAXMINOR                            *
+************************************************************/
+// selects a random vector of rank r,
+// a generator matrix of a code C of dimension k length n
+// and returns a generator matrix in systematic form and y = mG + e;
+function RandomRankSyndromeInstance(n,k,r,fqm,fq:verb:=0, fact1:=true, seed:=[0,0])
+    if seed[1] ne 0 then SetSeed(seed[1],seed[2]);end if;
+    a,b := GetSeed();
+    if verb ge 1 then printf "\nSeed=%o,%o",a,b;end if;
+    C := RandomLinearCode(fqm,n,k);
+    if fact1 then
+	C := StandardForm(C);
+    end if;
+    G := GeneratorMatrix(C);
+    e   := RandomVectorofWeight(n,r,fqm,fq);
+    assert RankWeight(e,fqm,fq) eq r;
+    y :=  Random(VectorSpace(fqm,k)) * G + e;
+    if fact1 then
+	y := y - Vector([y[i] : i in [1..k]])*G;
+	yn := Normalize(y);
+	i := Index(ElementToSequence(yn),1);
+        // if r <= rankGV then y should not be 0
+        assert i ne 0;
+	e := e/y[i];
+	y := y/y[i];
+	// up to permutation of columns, assume y[k+1]=1
+	if i ne k+1 then
+	    if verb ge 1 then printf "\nPermutation i=%o k+1=%o",i,k+1;end if;
+	    p := Sym(n)!(k+1,i);
+	    C := C^p;
+	    y := y^p;
+	    G := GeneratorMatrix(C);
+	    e := e^p;
+	end if;
+    end if;
+    assert ColumnSubmatrix(G,[1..k]) eq IdentityMatrix(fqm,k) and {y[i] : i in [1..k]} eq {0} and y[k+1] eq 1;
+    assert  (y-e)*Transpose(GeneratorMatrix(Dual(LinearCode(G)))) eq 0;
+    return G,y,e;
+end function;
+
+// returns the MaxMinors matrix
+function MaxMinorsMatrix(G,y,r,fqm,fq)
+    Cprime := LinearCode(G) + LinearCode(y);
+    Gy := GeneratorMatrix(Cprime);
+    Gy := EchelonForm(Gy);
+    k := Nrows(G);
+    n := Ncols(G);
+    m := Degree(fqm,fq);
+    assert Submatrix(Gy,[1..k+1],[1..k+1]) eq 1;
+    Vfqm, phiVfqm := VectorSpace(fqm, fq);
+    Hy := HorizontalJoin(-Transpose(Submatrix(Gy,[1..k+1],[k+2..n])),IdentityMatrix(fqm,n-k-1));
+    // entire matrix
+    MaxMinors := ZeroMatrix(fq,m*Binomial(n-k-1,r),Binomial(n,r));
+    // compute PJ for all J in {1..n-k-1} #J=r
+    // direct computation without optimization, can do better...
+    for J in Subsets({1..n-k-1},r) do
+	for T in Subsets({1..n},r) do
+	    // Construct a bloc of m rows
+	    B := Mat([Minor(Hy,Sort(Setseq(J)),Sort(Setseq(T)))],fqm,fq);
+	    // insert the bloc at position rowJ,colT
+	    rowJ := (SetToPos(n-k-1,J)-1)*m+1;
+	    colT := SetToPos(n,T);
+	    InsertBlock(~MaxMinors,B,rowJ,colT);
+	end for;
+    end for;
+    return MaxMinors;
+end function;
+
+// takes a MaxMinors matrix
+// computes the right kernel
+// computes C
+// solves in x
+// returns the error e
+function MaxMinorsSolve(M,G,y,r: verb:=0)
+    n := Ncols(G);
+    k := Nrows(G);
+    E := Basis(NullspaceOfTranspose(M));// E*Transpose(M)=0
+    assert #E ge 1;
+    if (#E gt 1) and (verb ge 1) then printf "\nSolution space of dimension %o, trying the first one",#E;end if;
+    fqm := CoefficientRing(G);
+    fq := CoefficientRing(M);
+    C := ChangeRing(MatrixFromMinors(n,r,E[1]),fqm);
+    // now solve a linear system
+    Gy := EchelonForm(VerticalJoin(G,y));
+    Hy := HorizontalJoin(-Transpose(ColumnSubmatrix(Gy,[k+2..n])),IdentityMatrix(fqm,n-k-1));
+    CHyT := C*Transpose(Hy);
+    e := KernelMatrix(C*Transpose(Hy));
+    if verb ge 1 then printf "C=%o, E=%o\n",C,e;end if;
+    if (Nrows(e) gt 1) and (verb ge 1) then printf "\n\t*** more than one solution: %o ***",Nrows(e);end if;
+    e := e[1]*C;
+    assert (RankWeight(e,fqm,fq) le r);
+    tmp := Transpose(GeneratorMatrix(Dual(LinearCode(G))));
+    assert  y*tmp in LinearCode(Vector(e)*tmp);
+    return e;
+end function;

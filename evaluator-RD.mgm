@@ -1,3 +1,4 @@
+load "tools.mgm";
 /*
    Magali Bardet <magali.bardet@univ-rouen.fr> 2023
 
@@ -41,38 +42,6 @@ forward LogStrassenComplexity;
 /* ******************************************** */
 /*                       COMMON TOOLS           */
 /* ******************************************** */
-
-// volume of sphere of radius t in GF(q^m)
-function St(t,q,m,n)
-    assert t le Min(m,n) and t ge 0;
-    if t eq 0 then return 1;
-    else
-	return &*[(q^n-q^j)*(q^m-q^j)/(q^t-q^j) : j in [0..t-1]];
-    end if;
-end function;
-
-// volume of ball of radius t in GF(q^m)
-function Bt(t,q,m,n)
-    assert t le Min(m,n) and t ge 0;
-    return &+[St(i,q,m,n) : i in [0..t]];
-end function;
-
-// return the rankGV bound for a code of length n and dimension k over GF(q^m)
-// i.e. the largest d such that q^(km)*B_(d-1) < q^(mn).
-// cf Loidreau 14, Gadouleau Yan 06.
-function rankGV(q,m,n,k)
-    d := 0;
-    while m*(n-k) ge  Log(q,Bt(d,q,m,n)) do
-	d := d+1;
-    end while;
-    return d-1;
-end function;
-
-// return the asymptotical value of rankGV for a code of length n and dimension k over GF(q^m)
-// i.e. the largest d such that q^(km)*B_(d-1) <= q^(mn).
-function rankGVasympt(m,n,k)
-    return (m+n)/2 - SquareRoot((m-n)^2/4+k*m);
-end function;
 
 function LogFieldMult(q)
     if q eq 2^128 then return Log(2,9062);
